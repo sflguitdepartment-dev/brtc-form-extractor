@@ -166,6 +166,13 @@ st.markdown("""
     [data-testid="stSidebar"] [data-baseweb="input"] {
         background-color: #FFFFFF !important;
     }
+    /* --- Streamlit স্ক্রিপ্ট রান করার সময় পুরনো লেখা ফিকে (dim) হয়ে যায়, সেটা বন্ধ করা --- */
+    [data-stale="true"] {
+        opacity: 1 !important;
+    }
+    .main .block-container {
+        opacity: 1 !important;
+    }
     </style>
 
     <div class="main-header">
