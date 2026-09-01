@@ -59,7 +59,7 @@ if uploaded_files:
                         # ফাইল ডেলাকে বেইজ৬৪ ফরম্যাটে রূপান্তর
                         base64_data = base64.b64encode(file_bytes).decode("utf-8")
                         
-                        # গুগলের অফিশিয়াল জেমিনি এপিআই ইউআরএল (শতভাগ নিখুঁত)
+                        # গুগলের অফিশিয়াল জেমিনি এপিআই ইউআরএল (শতভাগ নিখুঁত বানান)
                         url = f"https://googleapis.com{api_key}"
                         
                         headers = {"Content-Type": "application/json"}
