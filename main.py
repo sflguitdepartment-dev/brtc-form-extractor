@@ -12,126 +12,128 @@ st.set_page_config(page_title="BRTC Form Extractor Pro", layout="wide")
 
 st.markdown("""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Tiro+Bangla&family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Hind+Siliguri:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
     :root {
-        --paper: #F6F1E4;
-        --ledger-line: #D9CFB4;
-        --ink: #211D17;
-        --green-deep: #0B5C3C;
-        --red-stamp: #B3392C;
+        --bg: #F4F6F5;
+        --card: #FFFFFF;
+        --border: #E1E5E3;
+        --ink: #1A1F1D;
+        --ink-muted: #5B6560;
+        --green-deep: #0E6B45;
+        --green-dark: #0A4E33;
+        --red-stamp: #C0392B;
     }
 
     .stApp {
-        background-color: var(--paper);
+        background-color: var(--bg);
     }
 
     html, body, [class*="css"] {
-        font-family: 'Hind Siliguri', sans-serif;
+        font-family: 'Hind Siliguri', 'Inter', sans-serif;
         color: var(--ink);
     }
 
-    /* --- হেডার: লেজার বুকের লেটারহেড --- */
+    /* --- হেডার: পরিষ্কার, উচ্চ-কনট্রাস্ট প্রফেশনাল কার্ড --- */
     .main-header {
-        position: relative;
-        background:
-            repeating-linear-gradient(
-                var(--paper) 0px, var(--paper) 37px,
-                var(--ledger-line) 38px
-            );
-        border-left: 10px solid var(--green-deep);
-        border-radius: 2px;
-        padding: 28px 32px 28px 28px;
-        margin-bottom: 30px;
-        box-shadow: 0 1px 3px rgba(33,29,23,0.15);
+        background: var(--green-deep);
+        border-radius: 10px;
+        padding: 26px 32px;
+        margin-bottom: 28px;
+        box-shadow: 0 2px 8px rgba(10,78,51,0.18);
     }
     .main-header h1 {
-        font-family: 'Tiro Bangla', serif;
-        font-size: 2.1rem;
-        color: var(--green-deep);
+        font-family: 'Hind Siliguri', sans-serif;
+        font-weight: 700;
+        font-size: 1.9rem;
+        color: #FFFFFF;
         margin: 0 0 6px 0;
     }
     .main-header p {
-        font-family: 'JetBrains Mono', monospace;
-        font-size: 0.85rem;
-        letter-spacing: 0.5px;
-        color: var(--ink);
-        opacity: 0.75;
+        font-family: 'Hind Siliguri', sans-serif;
+        font-size: 0.95rem;
+        font-weight: 500;
+        color: #E7F3EC;
         margin: 0;
     }
-    .stamp-badge {
-        position: absolute;
-        top: 18px;
-        right: 28px;
-        width: 78px;
-        height: 78px;
-        border: 3px solid var(--red-stamp);
-        border-radius: 50%;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transform: rotate(-12deg);
-        color: var(--red-stamp);
-        font-family: 'JetBrains Mono', monospace;
+    .header-tag {
+        display: inline-block;
+        background: rgba(255,255,255,0.15);
+        color: #FFFFFF;
+        font-size: 0.75rem;
         font-weight: 600;
-        font-size: 0.7rem;
-        text-align: center;
-        line-height: 1.2;
-        opacity: 0.85;
+        padding: 4px 12px;
+        border-radius: 20px;
+        margin-top: 10px;
+    }
+
+    /* --- সেকশন টাইটেল --- */
+    h3 {
+        font-weight: 700 !important;
+        color: var(--ink) !important;
     }
 
     /* --- বাটন --- */
     .stButton > button {
         background-color: var(--green-deep);
-        color: var(--paper);
+        color: #FFFFFF;
         border: none;
-        border-radius: 2px;
+        border-radius: 8px;
         font-family: 'Hind Siliguri', sans-serif;
         font-weight: 600;
-        padding: 0.55rem 1.4rem;
+        font-size: 0.95rem;
+        padding: 0.6rem 1.5rem;
         transition: background-color 0.15s ease;
     }
     .stButton > button:hover {
-        background-color: var(--red-stamp);
-        color: var(--paper);
+        background-color: var(--green-dark);
+        color: #FFFFFF;
     }
 
-    /* --- ফাইল আপলোডার: ফর্ম-ফিলিং এরিয়ার মতো --- */
+    /* --- ফাইল আপলোডার --- */
     [data-testid="stFileUploaderDropzone"] {
-        background-color: var(--paper);
-        border: 2px dashed var(--green-deep);
-        border-radius: 2px;
+        background-color: var(--card);
+        border: 2px dashed #B7C4BE;
+        border-radius: 10px;
+    }
+    [data-testid="stFileUploaderDropzone"] * {
+        color: var(--ink) !important;
     }
 
     /* --- ডেটা টেবিল --- */
     [data-testid="stDataFrame"] {
-        border: 1px solid var(--ledger-line);
-        font-family: 'JetBrains Mono', monospace;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        overflow: hidden;
     }
 
-    /* --- সতর্কতা/সাকসেস/এরর: স্ট্যাম্পের মতো ফ্ল্যাট বর্ডার --- */
+    /* --- সতর্কতা/সাকসেস/এরর --- */
     div[data-testid="stAlert"] {
-        border-radius: 2px;
+        border-radius: 8px;
         font-family: 'Hind Siliguri', sans-serif;
+        font-size: 0.95rem;
     }
     div[data-testid="stAlertContentSuccess"] {
-        border-left: 6px solid var(--green-deep);
+        border-left: 5px solid var(--green-deep);
     }
     div[data-testid="stAlertContentError"] {
-        border-left: 6px solid var(--red-stamp);
+        border-left: 5px solid var(--red-stamp);
     }
 
     /* --- সাইডবার --- */
     [data-testid="stSidebar"] {
-        background-color: #EFE8D4;
-        border-right: 1px solid var(--ledger-line);
+        background-color: var(--card);
+        border-right: 1px solid var(--border);
+    }
+    [data-testid="stSidebar"] * {
+        color: var(--ink) !important;
     }
     </style>
 
     <div class="main-header">
-        <div class="stamp-badge">BRTC<br>দিনাজপুর</div>
-        <h1>BRTC Form Extractor</h1>
-        <p>বিআরটিসি বাস ডিপো ও প্রশিক্ষণ কেন্দ্র · দিনাজপুর · রেজিস্টার এন্ট্রি সিস্টেম</p>
+        <h1>📄 BRTC Form Extractor</h1>
+        <p>বিআরটিসি বাস ডিপো ও প্রশিক্ষণ কেন্দ্র, দিনাজপুর</p>
+        <span class="header-tag">রেজিস্টার এন্ট্রি সিস্টেম</span>
     </div>
 """, unsafe_allow_html=True)
 
