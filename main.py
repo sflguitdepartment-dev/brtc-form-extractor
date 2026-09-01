@@ -91,12 +91,32 @@ st.markdown("""
     }
 
     /* --- ফাইল আপলোডার --- */
+    [data-testid="stFileUploader"] {
+        background-color: transparent;
+    }
     [data-testid="stFileUploaderDropzone"] {
         background-color: var(--card);
         border: 2px dashed #B7C4BE;
         border-radius: 10px;
     }
     [data-testid="stFileUploaderDropzone"] * {
+        color: var(--ink) !important;
+        fill: var(--ink) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] button {
+        background-color: var(--card) !important;
+        color: var(--green-deep) !important;
+        border: 1.5px solid var(--green-deep) !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stFileUploaderDropzone"] small {
+        color: var(--ink-muted) !important;
+    }
+    [data-testid="stFileUploaderFile"], [data-testid="stFileUploaderFile"] * {
+        background-color: var(--card) !important;
+        color: var(--ink) !important;
+    }
+    [data-testid="stFileUploaderFileName"] {
         color: var(--ink) !important;
     }
 
