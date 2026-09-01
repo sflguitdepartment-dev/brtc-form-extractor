@@ -120,6 +120,12 @@ st.markdown("""
         color: var(--ink) !important;
     }
 
+    /* --- সাধারণ ফর্ম/উইজেট লেবেল (যেমন file uploader-এর উপরের নির্দেশনা) --- */
+    [data-testid="stWidgetLabel"] p {
+        color: var(--ink) !important;
+        font-weight: 500;
+    }
+
     /* --- ডেটা টেবিল --- */
     [data-testid="stDataFrame"] {
         border: 1px solid var(--border);
