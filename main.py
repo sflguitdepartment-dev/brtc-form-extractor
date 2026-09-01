@@ -196,12 +196,28 @@ def extract_entries_from_gemini(base64_data, mime_type, api_key, label):
             break
 
         error_message = str(error_info.get("message", error_info))
-        is_temporary = any(keyword in error_message.lower() for keyword in
-                            ["high demand", "overload", "unavailable", "try again",
-                             "rate limit", "quota", "503", "429"])
+        is_quota_error = "quota" in error_message.lower() or "rate_limit" in error_message.lower()
+        is_temporary = is_quota_error or any(keyword in error_message.lower() for keyword in
+                            ["high demand", "overload", "unavailable", "try again", "503", "429"])
 
         if is_temporary and attempt < max_retries - 1:
-            wait_seconds = (attempt + 1) * 5
+            # API নিজে যদি "retry in Xs" বলে দেয়, সেটাই ব্যবহার করা হবে (quota error-এর জন্য সবচেয়ে নির্ভরযোগ্য)
+            suggested_wait = None
+            error_details = error_info.get("details", []) if isinstance(error_info, dict) else []
+            for detail in error_details:
+                if isinstance(detail, dict) and "retryDelay" in detail:
+                    try:
+                        suggested_wait = int(str(detail["retryDelay"]).replace("s", "")) + 2
+                    except ValueError:
+                        pass
+
+            if suggested_wait:
+                wait_seconds = suggested_wait
+            elif is_quota_error:
+                wait_seconds = 20  # quota error হলে একটু বেশি সময় অপেক্ষা করা ভালো
+            else:
+                wait_seconds = (attempt + 1) * 5
+
             st.warning(f"⏳ {label}: সার্ভারে বেশি চাপ আছে, {wait_seconds} সেকেন্ড পর আবার চেষ্টা করা হচ্ছে... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(wait_seconds)
             continue
@@ -264,6 +280,10 @@ if uploaded_files:
                     for page_index, page_bytes in enumerate(page_bytes_list):
                         page_label = f"{uploaded_file.name} (পেজ {page_index + 1}/{total_pages})"
                         progress_bar.progress((page_index) / total_pages, text=f"⏳ {page_label} প্রসেস করা হচ্ছে...")
+
+                        # ফ্রি টিয়ারের rate limit (মিনিটে সীমিত রিকোয়েস্ট) এড়াতে পরপর কলের মাঝে ছোট বিরতি
+                        if page_index > 0:
+                            time.sleep(4)
 
                         base64_data = base64.b64encode(page_bytes).decode("utf-8")
 
