@@ -4,6 +4,7 @@ import io
 import json
 import requests
 import base64
+import time
 
 # ১. পেজ কনফিগারেশন ও সিএসএস দিয়ে গ্রিন থিম বজায় রাখা
 st.set_page_config(page_title="BRTC Form Extractor Pro", layout="wide")
@@ -100,13 +101,33 @@ if uploaded_files:
                             ]
                         }
 
-                        # সরাসরি HTTP পোস্ট রিকোয়েস্ট পাঠানো
-                        response = requests.post(url, headers=headers, json=payload)
-                        response_json = response.json()
+                        # সরাসরি HTTP পোস্ট রিকোয়েস্ট পাঠানো (High demand/temporary error হলে অটো-রিট্রাই করবে)
+                        max_retries = 4
+                        response_json = None
+                        for attempt in range(max_retries):
+                            response = requests.post(url, headers=headers, json=payload)
+                            response_json = response.json()
 
-                        # API থেকে এরর আসলে সরাসরি দেখানো (ডিবাগ করা সহজ হবে)
-                        if "error" in response_json:
-                            raise Exception(response_json["error"].get("message", str(response_json["error"])))
+                            # এরর আছে কিনা চেক করা
+                            error_info = response_json.get("error") if isinstance(response_json, dict) else None
+
+                            if not error_info:
+                                break  # সফল হয়েছে, লুপ থেকে বের হয়ে যাও
+
+                            error_message = str(error_info.get("message", error_info))
+                            # শুধু temporary/high-demand/overload/rate-limit টাইপ এরর হলে রিট্রাই করবে
+                            is_temporary = any(keyword in error_message.lower() for keyword in
+                                                ["high demand", "overload", "unavailable", "try again",
+                                                 "rate limit", "quota", "503", "429"])
+
+                            if is_temporary and attempt < max_retries - 1:
+                                wait_seconds = (attempt + 1) * 5  # ৫, ১০, ১৫... সেকেন্ড করে wait বাড়বে
+                                st.warning(f"⏳ {uploaded_file.name}: সার্ভারে বেশি চাপ আছে, {wait_seconds} সেকেন্ড পর আবার চেষ্টা করা হচ্ছে... (Attempt {attempt + 1}/{max_retries})")
+                                time.sleep(wait_seconds)
+                                continue
+                            else:
+                                # temporary না হলে বা শেষ চেষ্টাও ব্যর্থ হলে, এরর তুলে দাও
+                                raise Exception(error_message)
 
                         # এআই-এর রেসপন্স থেকে টেক্সট এক্সট্রাক্ট করা
                         # FIX: candidates এবং parts আসলে list, তাই [0] ইনডেক্স লাগবে
