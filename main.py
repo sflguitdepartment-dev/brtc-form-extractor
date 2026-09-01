@@ -62,7 +62,7 @@ if uploaded_files:
                         # সঠিক Gemini API URL (FIX: আগের ভার্সনে এখানে বাগ ছিল -
                         # api_key সরাসরি "googleapis.com" এর সাথে জোড়া লেগে যাচ্ছিল,
                         # যার ফলে DNS resolve করতে পারছিল না)
-                        model_name = "gemini-1.5-flash"  # চাইলে gemini-2.0-flash ও ব্যবহার করতে পারেন
+                        model_name = "gemini-2.5-flash"  # gemini-1.5-flash বন্ধ হয়ে গেছে, তাই এটা ব্যবহার করা হচ্ছে
                         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
 
                         headers = {"Content-Type": "application/json"}
