@@ -30,7 +30,7 @@ api_key = st.sidebar.text_input("🔑 আপনার Gemini API Key দিন",
 
 # ৩. সেশন স্টেটে এক্সেল ডাটা ফ্রেম ইনিশিয়েলাইজ করা
 if 'excel_df' not in st.session_state:
-    st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা"])
+    st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রخدمة প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা"])
 
 # ৪. ফাইল আপলোডার (Image এবং PDF একসাথে সাপোর্ট করবে)
 uploaded_files = st.file_uploader("আপনার PDF বা Image ফর্মগুলো আপলোড করুন (একাধিক ফাইল একসাথে সিলেক্ট করতে পারবেন)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True)
@@ -59,7 +59,7 @@ if uploaded_files:
                         # ফাইল ডেলাকে বেইজ৬৪ ফরম্যাটে রূপান্তর
                         base64_data = base64.b64encode(file_bytes).decode("utf-8")
                         
-                        # গুগলের অফিশিয়াল জেমিনি এপিআই ইউআরএল (শতভাগ নিখুঁত বানান)
+                        # গুগলের একদম সঠিক অফিশিয়াল জেমিনি এপিআই ইউআরএল
                         url = f"https://googleapis.com{api_key}"
                         
                         headers = {"Content-Type": "application/json"}
