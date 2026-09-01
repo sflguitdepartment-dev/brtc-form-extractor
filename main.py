@@ -136,9 +136,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ২. সাইডবারে এপিআই কি ইনপুট
-api_key = st.sidebar.text_input("🔑 আপনার Gemini API Key দিন", type="password")
-groq_api_key = st.sidebar.text_input("🔑 Groq API Key (ঐচ্ছিক - Gemini limit শেষ হলে ব্যাকআপ হিসেবে ব্যবহার হবে)", type="password")
-st.sidebar.caption("Groq key ফ্রি বানাতে: console.groq.com")
+# ২. সাইডবারে এপিআই কি ইনপুট (Secrets-এ সেভ থাকলে অটো-ফিল হয়ে যাবে, বারবার টাইপ করতে হবে না)
+def get_secret(key):
+    try:
+        return st.secrets.get(key, "")
+    except Exception:
+        return ""
+
+api_key = st.sidebar.text_input("🔑 আপনার Gemini API Key দিন", value=get_secret("GEMINI_API_KEY"), type="password")
+groq_api_key = st.sidebar.text_input("🔑 Groq API Key (ঐচ্ছিক - ১ম ব্যাকআপ)", value=get_secret("GROQ_API_KEY"), type="password")
+mistral_api_key = st.sidebar.text_input("🔑 Mistral API Key (ঐচ্ছিক - ২য় ব্যাকআপ)", value=get_secret("MISTRAL_API_KEY"), type="password")
+st.sidebar.caption("ফ্রি key বানাতে: console.groq.com এবং console.mistral.ai")
+st.sidebar.caption("💡 key বারবার না দিতে চাইলে Secrets-এ সেভ করুন (নিচে instruction দেখুন)")
 
 # ৩. সেশন স্টেটে এক্সেল ডাটা ফ্রেম ইনিশিয়েলাইজ করা
 if 'excel_df' not in st.session_state:
@@ -296,12 +305,75 @@ def extract_entries_from_groq(base64_data, mime_type, api_key, label):
     return parsed_data
 
 
-# ৬. PDF পেজকে ছবিতে রূপান্তর (Groq শুধু ছবি নেয়, PDF সরাসরি নেয় না)
+# ৬. PDF পেজকে ছবিতে রূপান্তর (Groq ও Mistral vision মডেল শুধু ছবি নেয়, PDF সরাসরি নেয় না)
 def pdf_page_to_png(pdf_page_bytes):
     import fitz  # PyMuPDF
     doc = fitz.open(stream=pdf_page_bytes, filetype="pdf")
     pix = doc[0].get_pixmap(dpi=200)
     return pix.tobytes("png")
+
+
+# ৬.১ একটা সিঙ্গেল পেজ/ইমেজ Mistral (২য় ব্যাকআপ)-এ পাঠিয়ে ডেটা এক্সট্রাক্ট করার ফাংশন
+def extract_entries_from_mistral(base64_data, mime_type, api_key, label):
+    url = "https://api.mistral.ai/v1/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    model_name = "pixtral-12b-2409"  # Mistral-এর vision-capable মডেল, হাতে-লেখা ফর্মে তুলনামূলক ভালো
+
+    prompt = """
+    You are an expert OCR and data extraction AI. This image may contain ONE or MULTIPLE separate BRTC Driver Training forms.
+
+    Carefully extract, for EACH form you find:
+    - Applicant's name in Bangla (প্রশিক্ষণার্থীর নাম)
+    - Father's name in Bangla (পিতার নাম)
+    - National ID number (জাতীয় পরিচয়পত্র নং)
+    - Mobile number (মোবাইল নম্বর)
+    - District/location name from the center name at the top (e.g., দিনাজপুর)
+
+    Strictly format the Mobile number by keeping the last 9 or 11 digits and stripping hyphens based on user example.
+
+    You MUST output ONLY a valid JSON ARRAY (a list), with ONE object per form found, even if there is only 1 form. Do not include markdown code blocks like ```json or any trailing words.
+
+    Example format:
+    [
+        {
+            "name": "Exact Name in Bangla",
+            "father": "Exact Father Name in Bangla",
+            "nid": "NID Number String",
+            "mobile": "Mobile Number String",
+            "district": "দিনাজপুর"
+        }
+    ]
+    """
+
+    payload = {
+        "model": model_name,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}}
+                ]
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    response_json = response.json()
+
+    if isinstance(response_json, dict) and "error" in response_json:
+        raise Exception(str(response_json["error"].get("message", response_json["error"])))
+    if isinstance(response_json, dict) and "message" in response_json and "choices" not in response_json:
+        raise Exception(str(response_json.get("message")))
+
+    response_text = response_json['choices'][0]['message']['content']
+    clean_json = response_text.replace("```json", "").replace("```", "").strip()
+    parsed_data = json.loads(clean_json)
+
+    if isinstance(parsed_data, dict):
+        return [parsed_data]
+    return parsed_data
 
 
 # ৭. একটা PDF-কে আলাদা আলাদা পেজে ভেঙে দেওয়ার ফাংশন
@@ -361,22 +433,41 @@ if uploaded_files:
                         try:
                             entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
                         except Exception as gemini_error:
+                            entries_list = None
+                            last_error = gemini_error
+
+                            # ১ম ব্যাকআপ: Groq
                             if groq_api_key:
-                                st.warning(f"⚠️ {page_label}: Gemini ব্যর্থ হয়েছে, Groq (ব্যাকআপ) দিয়ে চেষ্টা করা হচ্ছে...")
+                                st.warning(f"⚠️ {page_label}: Gemini ব্যর্থ হয়েছে, Groq (ব্যাকআপ ১) দিয়ে চেষ্টা করা হচ্ছে...")
                                 try:
                                     if page_mime == "application/pdf":
                                         png_bytes = pdf_page_to_png(page_bytes)
-                                        groq_base64 = base64.b64encode(png_bytes).decode("utf-8")
-                                        groq_mime = "image/png"
+                                        backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
+                                        backup_mime = "image/png"
                                     else:
-                                        groq_base64 = base64_data
-                                        groq_mime = page_mime
-                                    entries_list = extract_entries_from_groq(groq_base64, groq_mime, groq_api_key, page_label)
+                                        backup_base64 = base64_data
+                                        backup_mime = page_mime
+                                    entries_list = extract_entries_from_groq(backup_base64, backup_mime, groq_api_key, page_label)
                                 except Exception as groq_error:
-                                    st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে (Gemini ও Groq দুটোতেই ব্যর্থ): {str(groq_error)}")
-                                    continue
-                            else:
-                                st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে: {str(gemini_error)}")
+                                    last_error = groq_error
+
+                            # ২য় ব্যাকআপ: Mistral (Groq-ও fail করলে বা key না থাকলে)
+                            if entries_list is None and mistral_api_key:
+                                st.warning(f"⚠️ {page_label}: Groq-ও ব্যর্থ হয়েছে, Mistral (ব্যাকআপ ২) দিয়ে চেষ্টা করা হচ্ছে...")
+                                try:
+                                    if page_mime == "application/pdf":
+                                        png_bytes = pdf_page_to_png(page_bytes)
+                                        backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
+                                        backup_mime = "image/png"
+                                    else:
+                                        backup_base64 = base64_data
+                                        backup_mime = page_mime
+                                    entries_list = extract_entries_from_mistral(backup_base64, backup_mime, mistral_api_key, page_label)
+                                except Exception as mistral_error:
+                                    last_error = mistral_error
+
+                            if entries_list is None:
+                                st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে (সব সোর্স ব্যর্থ): {str(last_error)}")
                                 continue
 
                         for data_json in entries_list:
