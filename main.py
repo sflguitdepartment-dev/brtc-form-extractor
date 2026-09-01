@@ -137,6 +137,8 @@ st.markdown("""
 
 # ২. সাইডবারে এপিআই কি ইনপুট
 api_key = st.sidebar.text_input("🔑 আপনার Gemini API Key দিন", type="password")
+groq_api_key = st.sidebar.text_input("🔑 Groq API Key (ঐচ্ছিক - Gemini limit শেষ হলে ব্যাকআপ হিসেবে ব্যবহার হবে)", type="password")
+st.sidebar.caption("Groq key ফ্রি বানাতে: console.groq.com")
 
 # ৩. সেশন স্টেটে এক্সেল ডাটা ফ্রেম ইনিশিয়েলাইজ করা
 if 'excel_df' not in st.session_state:
@@ -233,7 +235,76 @@ def extract_entries_from_gemini(base64_data, mime_type, api_key, label):
     return parsed_data
 
 
-# ৫. একটা PDF-কে আলাদা আলাদা পেজে ভেঙে দেওয়ার ফাংশন
+# ৫. একটা সিঙ্গেল পেজ/ইমেজ Groq (ব্যাকআপ)-তে পাঠিয়ে ডেটা এক্সট্রাক্ট করার ফাংশন
+def extract_entries_from_groq(base64_data, mime_type, api_key, label):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+    model_name = "meta-llama/llama-4-scout-17b-16e-instruct"
+
+    prompt = """
+    You are an expert OCR and data extraction AI. This image may contain ONE or MULTIPLE separate BRTC Driver Training forms.
+
+    Carefully extract, for EACH form you find:
+    - Applicant's name in Bangla (প্রশিক্ষণার্থীর নাম)
+    - Father's name in Bangla (পিতার নাম)
+    - National ID number (জাতীয় পরিচয়পত্র নং)
+    - Mobile number (মোবাইল নম্বর)
+    - District/location name from the center name at the top (e.g., দিনাজপুর)
+
+    Strictly format the Mobile number by keeping the last 9 or 11 digits and stripping hyphens based on user example.
+
+    You MUST output ONLY a valid JSON ARRAY (a list), with ONE object per form found, even if there is only 1 form. Do not include markdown code blocks like ```json or any trailing words.
+
+    Example format:
+    [
+        {
+            "name": "Exact Name in Bangla",
+            "father": "Exact Father Name in Bangla",
+            "nid": "NID Number String",
+            "mobile": "Mobile Number String",
+            "district": "দিনাজপুর"
+        }
+    ]
+    """
+
+    payload = {
+        "model": model_name,
+        "temperature": 0,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{base64_data}"}}
+                ]
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=payload)
+    response_json = response.json()
+
+    if isinstance(response_json, dict) and "error" in response_json:
+        raise Exception(str(response_json["error"].get("message", response_json["error"])))
+
+    response_text = response_json['choices'][0]['message']['content']
+    clean_json = response_text.replace("```json", "").replace("```", "").strip()
+    parsed_data = json.loads(clean_json)
+
+    if isinstance(parsed_data, dict):
+        return [parsed_data]
+    return parsed_data
+
+
+# ৬. PDF পেজকে ছবিতে রূপান্তর (Groq শুধু ছবি নেয়, PDF সরাসরি নেয় না)
+def pdf_page_to_png(pdf_page_bytes):
+    import fitz  # PyMuPDF
+    doc = fitz.open(stream=pdf_page_bytes, filetype="pdf")
+    pix = doc[0].get_pixmap(dpi=200)
+    return pix.tobytes("png")
+
+
+# ৭. একটা PDF-কে আলাদা আলাদা পেজে ভেঙে দেওয়ার ফাংশন
 def split_pdf_into_pages(file_bytes):
     reader = PdfReader(io.BytesIO(file_bytes))
     page_bytes_list = []
@@ -246,7 +317,7 @@ def split_pdf_into_pages(file_bytes):
     return page_bytes_list
 
 
-# ৬. ফাইল আপলোডার (Image এবং PDF একসাথে সাপোর্ট করবে)
+# ৮. ফাইল আপলোডার (Image এবং PDF একসাথে সাপোর্ট করবে)
 uploaded_files = st.file_uploader("আপনার PDF বা Image ফর্মগুলো আপলোড করুন (একাধিক ফাইল একসাথে সিলেক্ট করতে পারবেন)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True)
 
 if uploaded_files:
@@ -289,9 +360,24 @@ if uploaded_files:
 
                         try:
                             entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
-                        except Exception as page_error:
-                            st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে: {str(page_error)}")
-                            continue
+                        except Exception as gemini_error:
+                            if groq_api_key:
+                                st.warning(f"⚠️ {page_label}: Gemini ব্যর্থ হয়েছে, Groq (ব্যাকআপ) দিয়ে চেষ্টা করা হচ্ছে...")
+                                try:
+                                    if page_mime == "application/pdf":
+                                        png_bytes = pdf_page_to_png(page_bytes)
+                                        groq_base64 = base64.b64encode(png_bytes).decode("utf-8")
+                                        groq_mime = "image/png"
+                                    else:
+                                        groq_base64 = base64_data
+                                        groq_mime = page_mime
+                                    entries_list = extract_entries_from_groq(groq_base64, groq_mime, groq_api_key, page_label)
+                                except Exception as groq_error:
+                                    st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে (Gemini ও Groq দুটোতেই ব্যর্থ): {str(groq_error)}")
+                                    continue
+                            else:
+                                st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে: {str(gemini_error)}")
+                                continue
 
                         for data_json in entries_list:
                             current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
