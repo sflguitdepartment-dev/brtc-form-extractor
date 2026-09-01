@@ -173,6 +173,14 @@ st.markdown("""
     .main .block-container {
         opacity: 1 !important;
     }
+    /* Streamlit inline style দিয়ে opacity কমিয়ে দেয়, সেটাও জোর করে ওভাররাইড করা হচ্ছে */
+    [style*="opacity"] {
+        opacity: 1 !important;
+    }
+    .element-container, .stMarkdown, .stAlert, .stProgress {
+        opacity: 1 !important;
+        transition: none !important;
+    }
     </style>
 
     <div class="main-header">
