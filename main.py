@@ -154,6 +154,18 @@ st.markdown("""
     [data-testid="stSidebar"] * {
         color: var(--ink) !important;
     }
+    [data-testid="stSidebar"] input {
+        background-color: #FFFFFF !important;
+        color: var(--ink) !important;
+        border: 1.5px solid var(--border) !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stSidebar"] input:focus {
+        border-color: var(--green-deep) !important;
+    }
+    [data-testid="stSidebar"] [data-baseweb="input"] {
+        background-color: #FFFFFF !important;
+    }
     </style>
 
     <div class="main-header">
