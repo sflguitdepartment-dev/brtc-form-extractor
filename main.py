@@ -5,7 +5,8 @@ import json
 import requests
 import base64
 import time
-from pypdf import PdfReader, PdfWriter
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import datetime
 
 # ১. পেজ কনফিগারেশন ও কাস্টম ডিজাইন (লেজার/রেজিস্টার বুক থিম)
 st.set_page_config(page_title="BRTC Form Extractor Pro", layout="wide")
@@ -392,37 +393,84 @@ def extract_entries_from_groq(base64_data, mime_type, api_key, label):
     return parsed_data
 
 
-# ৬. PDF পেজকে ছবিতে রূপান্তর (Groq ও Mistral vision মডেল শুধু ছবি নেয়, PDF সরাসরি নেয় না)
-def pdf_page_to_png(pdf_page_bytes):
+# ৬. PDF-কে পেজ-বাই-পেজ কম-রেজোলিউশনের ছবিতে রূপান্তর করে ভাঙা (দ্রুত আপলোড/প্রসেসিং-এর জন্য)
+def split_pdf_into_page_images(file_bytes, dpi=130):
     import fitz  # PyMuPDF
-    doc = fitz.open(stream=pdf_page_bytes, filetype="pdf")
-    pix = doc[0].get_pixmap(dpi=200)
-    return pix.tobytes("png")
+    doc = fitz.open(stream=file_bytes, filetype="pdf")
+    images = []
+    for page in doc:
+        pix = page.get_pixmap(dpi=dpi)
+        images.append(pix.tobytes("jpeg"))
+    return images
 
 
-# ৬.১ প্রিভিউ/QA-এর জন্য ছোট থাম্বনেইল বানানো (এক্সট্র্যাক্ট করা ডেটার পাশে দেখানোর জন্য)
-def make_thumbnail_data_uri(page_bytes, page_mime, max_width=200):
+# ৬.১ সরাসরি আপলোড করা ছবি (jpg/png) বেশি বড় হলে ছোট করে দেওয়া (দ্রুত আপলোড/প্রসেসিংয়ের জন্য)
+def resize_image_bytes(image_bytes, max_width=1000):
     try:
-        if page_mime == "application/pdf":
-            import fitz
-            doc = fitz.open(stream=page_bytes, filetype="pdf")
-            page = doc[0]
-            zoom = max_width / page.rect.width
-            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
-            img_bytes = pix.tobytes("jpeg")
-        else:
-            from PIL import Image
-            img = Image.open(io.BytesIO(page_bytes)).convert("RGB")
+        from PIL import Image
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        if img.width > max_width:
             ratio = max_width / img.width
             img = img.resize((max_width, max(1, int(img.height * ratio))))
-            buf = io.BytesIO()
-            img.save(buf, format="JPEG", quality=70)
-            img_bytes = buf.getvalue()
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=85)
+        return buf.getvalue()
+    except Exception:
+        return image_bytes  # রিসাইজ ব্যর্থ হলে মূল ছবিটাই ব্যবহার হবে
 
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+# ৬.২ প্রিভিউ/QA-এর জন্য ছোট থাম্বনেইল বানানো (এক্সট্র্যাক্ট করা ডেটার পাশে দেখানোর জন্য)
+def make_thumbnail_data_uri(page_bytes, max_width=200):
+    try:
+        from PIL import Image
+        img = Image.open(io.BytesIO(page_bytes)).convert("RGB")
+        ratio = max_width / img.width
+        img = img.resize((max_width, max(1, int(img.height * ratio))))
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=70)
+        b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
         return f"data:image/jpeg;base64,{b64}"
     except Exception:
         return None  # থাম্বনেইল বানাতে ব্যর্থ হলেও মূল ডেটা এক্সট্রাকশন যেন থেমে না যায়
+
+
+# ৬.৩ একটা পেজ সম্পূর্ণভাবে প্রসেস করা: Gemini → Groq → Mistral ফলব্যাক চেইন
+# (এই ফাংশনটা প্যারালাল থ্রেডে চলবে, তাই এর ভেতরে কোনো st.* কল করা হয় না — শুধু রেজাল্ট রিটার্ন করে)
+def process_single_page(page_bytes, page_label, api_key, groq_api_key, mistral_api_key):
+    base64_data = base64.b64encode(page_bytes).decode("utf-8")
+    page_mime = "image/jpeg"
+    entries_list = None
+    source_used = None
+    last_error = None
+
+    try:
+        entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
+        source_used = "gemini"
+    except Exception as gemini_error:
+        last_error = gemini_error
+
+        if groq_api_key:
+            try:
+                entries_list = extract_entries_from_groq(base64_data, page_mime, groq_api_key, page_label)
+                source_used = "groq"
+            except Exception as groq_error:
+                last_error = groq_error
+
+        if entries_list is None and mistral_api_key:
+            try:
+                entries_list = extract_entries_from_mistral(base64_data, page_mime, mistral_api_key, page_label)
+                source_used = "mistral"
+            except Exception as mistral_error:
+                last_error = mistral_error
+
+    thumbnail_uri = make_thumbnail_data_uri(page_bytes) if entries_list is not None else None
+
+    return {
+        "entries_list": entries_list,
+        "source_used": source_used,
+        "error": last_error,
+        "thumbnail_uri": thumbnail_uri
+    }
 
 
 # ৬.১ একটা সিঙ্গেল পেজ/ইমেজ Mistral (২য় ব্যাকআপ)-এ পাঠিয়ে ডেটা এক্সট্রাক্ট করার ফাংশন
@@ -488,19 +536,6 @@ def extract_entries_from_mistral(base64_data, mime_type, api_key, label):
     return parsed_data
 
 
-# ৭. একটা PDF-কে আলাদা আলাদা পেজে ভেঙে দেওয়ার ফাংশন
-def split_pdf_into_pages(file_bytes):
-    reader = PdfReader(io.BytesIO(file_bytes))
-    page_bytes_list = []
-    for page in reader.pages:
-        writer = PdfWriter()
-        writer.add_page(page)
-        buf = io.BytesIO()
-        writer.write(buf)
-        page_bytes_list.append(buf.getvalue())
-    return page_bytes_list
-
-
 # ৮. ফাইল আপলোডার (Image এবং PDF একসাথে সাপোর্ট করবে)
 uploaded_files = st.file_uploader("আপনার PDF বা Image ফর্মগুলো আপলোড করুন (একাধিক ফাইল একসাথে সিলেক্ট করতে পারবেন)", type=["jpg", "jpeg", "png", "pdf"], accept_multiple_files=True)
 
@@ -509,6 +544,9 @@ if uploaded_files:
         if not api_key:
             st.error("অনুগ্রহ করে সাইডবারে আপনার Gemini API Key-টি প্রদান করুন।")
         else:
+            BATCH_SIZE = 3          # একসাথে কতগুলো পেজ প্যারালালি পাঠানো হবে
+            BATCH_PAUSE_SECONDS = 8  # প্রতিটা ব্যাচের পর rate-limit এড়াতে বিরতি
+
             for uploaded_file in uploaded_files:
                 with st.spinner(f"{uploaded_file.name} প্রসেস করা হচ্ছে... (একটু সময় লাগতে পারে)"):
                     try:
@@ -516,96 +554,69 @@ if uploaded_files:
                         file_name_lower = uploaded_file.name.lower()
                         is_pdf = file_name_lower.endswith('.pdf')
 
-                        # PDF হলে পেজ-বাই-পেজ ভেঙে ফেলা হচ্ছে, ইমেজ হলে একটাই "পেজ" হিসেবে ধরা হচ্ছে
+                        # PDF হলে কম-রেজোলিউশনের ছবিতে ভেঙে ফেলা হচ্ছে, ইমেজ হলে রিসাইজ করে একটাই "পেজ" হিসেবে ধরা হচ্ছে
                         if is_pdf:
-                            page_bytes_list = split_pdf_into_pages(file_bytes)
-                            page_mime = "application/pdf"
+                            page_bytes_list = split_pdf_into_page_images(file_bytes)
                         else:
-                            page_bytes_list = [file_bytes]
-                            if file_name_lower.endswith('.png'):
-                                page_mime = "image/png"
-                            elif file_name_lower.endswith('.webp'):
-                                page_mime = "image/webp"
-                            else:
-                                page_mime = "image/jpeg"
+                            page_bytes_list = [resize_image_bytes(file_bytes)]
 
                         total_pages = len(page_bytes_list)
                         all_new_rows = []
                         failed_pages = 0
                         last_error = None
 
-                        for page_index, page_bytes in enumerate(page_bytes_list):
-                            page_label = f"{uploaded_file.name} (পেজ {page_index + 1}/{total_pages})"
+                        for batch_start in range(0, total_pages, BATCH_SIZE):
+                            batch = page_bytes_list[batch_start: batch_start + BATCH_SIZE]
+                            batch_results = [None] * len(batch)
 
-                            # ফ্রি টিয়ারের rate limit (মিনিটে সীমিত রিকোয়েস্ট) এড়াতে পরপর কলের মাঝে ছোট বিরতি
-                            if page_index > 0:
-                                time.sleep(4)
+                            with ThreadPoolExecutor(max_workers=len(batch)) as executor:
+                                future_to_index = {}
+                                for i, page_bytes in enumerate(batch):
+                                    page_label = f"{uploaded_file.name} (পেজ {batch_start + i + 1}/{total_pages})"
+                                    future = executor.submit(process_single_page, page_bytes, page_label, api_key, groq_api_key, mistral_api_key)
+                                    future_to_index[future] = i
 
-                            base64_data = base64.b64encode(page_bytes).decode("utf-8")
-                            source_used = None
+                                for future in as_completed(future_to_index):
+                                    batch_results[future_to_index[future]] = future.result()
 
-                            try:
-                                entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
-                                source_used = "gemini"
-                            except Exception as gemini_error:
-                                entries_list = None
-                                last_error = gemini_error
-
-                                # ১ম ব্যাকআপ: Groq
-                                if groq_api_key:
-                                    try:
-                                        if page_mime == "application/pdf":
-                                            png_bytes = pdf_page_to_png(page_bytes)
-                                            backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
-                                            backup_mime = "image/png"
-                                        else:
-                                            backup_base64 = base64_data
-                                            backup_mime = page_mime
-                                        entries_list = extract_entries_from_groq(backup_base64, backup_mime, groq_api_key, page_label)
-                                        source_used = "groq"
-                                    except Exception as groq_error:
-                                        last_error = groq_error
-
-                                # ২য় ব্যাকআপ: Mistral (Groq-ও fail করলে বা key না থাকলে)
-                                if entries_list is None and mistral_api_key:
-                                    try:
-                                        if page_mime == "application/pdf":
-                                            png_bytes = pdf_page_to_png(page_bytes)
-                                            backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
-                                            backup_mime = "image/png"
-                                        else:
-                                            backup_base64 = base64_data
-                                            backup_mime = page_mime
-                                        entries_list = extract_entries_from_mistral(backup_base64, backup_mime, mistral_api_key, page_label)
-                                        source_used = "mistral"
-                                    except Exception as mistral_error:
-                                        last_error = mistral_error
-
-                                if entries_list is None:
+                            for i, result in enumerate(batch_results):
+                                if result["entries_list"] is None:
                                     failed_pages += 1
+                                    last_error = result["error"]
                                     continue
 
-                            # API ব্যবহারের কাউন্টার আপডেট
-                            if source_used:
-                                st.session_state.api_usage[source_used] += 1
+                                if result["source_used"]:
+                                    st.session_state.api_usage[result["source_used"]] += 1
 
-                            # এই পেজের জন্য একটা থাম্বনেইল বানানো (QA-এর জন্য, একবারই বানিয়ে সব এন্ট্রিতে ব্যবহার হবে)
-                            thumbnail_uri = make_thumbnail_data_uri(page_bytes, page_mime)
+                                for data_json in result["entries_list"]:
+                                    current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
+                                    formatted_name_father = f"নাম- {data_json.get('name')}   পিতা- {data_json.get('father')}"
+                                    all_new_rows.append({
+                                        "ক্রঃনং": current_sl,
+                                        "প্রশিক্ষণার্থীর নাম ও পিতার নাম": formatted_name_father,
+                                        "জাতীয় পরিচয়পত্র নং": str(data_json.get('nid')),
+                                        "মোবাইল নম্বর": str(data_json.get('mobile')),
+                                        "জেলা": data_json.get('district'),
+                                        "থাম্বনেইল": result["thumbnail_uri"]
+                                    })
 
-                            for data_json in entries_list:
-                                current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
-                                formatted_name_father = f"নাম- {data_json.get('name')}   পিতা- {data_json.get('father')}"
-                                all_new_rows.append({
-                                    "ক্রঃনং": current_sl,
-                                    "প্রশিক্ষণার্থীর নাম ও পিতার নাম": formatted_name_father,
-                                    "জাতীয় পরিচয়পত্র নং": str(data_json.get('nid')),
-                                    "মোবাইল নম্বর": str(data_json.get('mobile')),
-                                    "জেলা": data_json.get('district'),
-                                    "থাম্বনেইল": thumbnail_uri
-                                })
+                            # পরের ব্যাচ থাকলে rate-limit এড়াতে একটু বিরতি
+                            if batch_start + BATCH_SIZE < total_pages:
+                                time.sleep(BATCH_PAUSE_SECONDS)
 
                         if all_new_rows:
                             st.session_state.excel_df = pd.concat([st.session_state.excel_df, pd.DataFrame(all_new_rows)], ignore_index=True)
+
+                        # ব্যাচ-ট্র্যাকিং লগে এই ফাইলের সারাংশ যোগ করা (সেশন জুড়ে অগ্রগতি দেখতে সুবিধার জন্য)
+                        if 'process_log' not in st.session_state:
+                            st.session_state.process_log = []
+                        st.session_state.process_log.append({
+                            "ফাইল": uploaded_file.name,
+                            "মোট পেজ": total_pages,
+                            "সফল এন্ট্রি": len(all_new_rows),
+                            "ব্যর্থ পেজ": failed_pages,
+                            "সময়": datetime.now().strftime("%H:%M:%S")
+                        })
 
                         if failed_pages > 0:
                             st.info(f"📄 {uploaded_file.name}: {total_pages} পেজ থেকে {len(all_new_rows)} টি এন্ট্রি পাওয়া গেছে। ({failed_pages} টি পেজ প্রসেস করা যায়নি: {str(last_error)[:120]})")
@@ -615,8 +626,12 @@ if uploaded_files:
                     except Exception as e:
                         st.error(f"{uploaded_file.name} প্রসেস করতে ত্রুটি হয়েছে: {str(e)}")
 
-
             st.success("✅ সব ফাইলের ডেটা সফলভাবে এক্সট্রাক্ট করা হয়েছে!")
+
+# ৮.১ এই সেশনে কোন কোন ফাইল প্রসেস হয়েছে তার লগ (ব্যাচ ট্র্যাকিং)
+if st.session_state.get('process_log'):
+    with st.expander(f"🗂️ এই সেশনে প্রসেস করা ফাইলের লগ ({len(st.session_state.process_log)} টা ফাইল)"):
+        st.dataframe(pd.DataFrame(st.session_state.process_log), use_container_width=True, hide_index=True)
 
 # ৭. এক্সেল ডেটা টেবিল প্রিভিউ এবং ডাউনলোড সেকশন
 if not st.session_state.excel_df.empty:
