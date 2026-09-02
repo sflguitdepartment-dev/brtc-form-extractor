@@ -306,7 +306,6 @@ def extract_entries_from_gemini(base64_data, mime_type, api_key, label):
             else:
                 wait_seconds = (attempt + 1) * 5
 
-            st.warning(f"⏳ {label}: সার্ভারে বেশি চাপ আছে, {wait_seconds} সেকেন্ড পর আবার চেষ্টা করা হচ্ছে... (Attempt {attempt + 1}/{max_retries})")
             time.sleep(wait_seconds)
             continue
         else:
@@ -475,99 +474,99 @@ if uploaded_files:
             st.error("অনুগ্রহ করে সাইডবারে আপনার Gemini API Key-টি প্রদান করুন।")
         else:
             for uploaded_file in uploaded_files:
-                try:
-                    file_bytes = uploaded_file.read()
-                    file_name_lower = uploaded_file.name.lower()
-                    is_pdf = file_name_lower.endswith('.pdf')
+                with st.spinner(f"{uploaded_file.name} প্রসেস করা হচ্ছে... (একটু সময় লাগতে পারে)"):
+                    try:
+                        file_bytes = uploaded_file.read()
+                        file_name_lower = uploaded_file.name.lower()
+                        is_pdf = file_name_lower.endswith('.pdf')
 
-                    # PDF হলে পেজ-বাই-পেজ ভেঙে ফেলা হচ্ছে, ইমেজ হলে একটাই "পেজ" হিসেবে ধরা হচ্ছে
-                    if is_pdf:
-                        page_bytes_list = split_pdf_into_pages(file_bytes)
-                        page_mime = "application/pdf"
-                    else:
-                        page_bytes_list = [file_bytes]
-                        if file_name_lower.endswith('.png'):
-                            page_mime = "image/png"
-                        elif file_name_lower.endswith('.webp'):
-                            page_mime = "image/webp"
+                        # PDF হলে পেজ-বাই-পেজ ভেঙে ফেলা হচ্ছে, ইমেজ হলে একটাই "পেজ" হিসেবে ধরা হচ্ছে
+                        if is_pdf:
+                            page_bytes_list = split_pdf_into_pages(file_bytes)
+                            page_mime = "application/pdf"
                         else:
-                            page_mime = "image/jpeg"
+                            page_bytes_list = [file_bytes]
+                            if file_name_lower.endswith('.png'):
+                                page_mime = "image/png"
+                            elif file_name_lower.endswith('.webp'):
+                                page_mime = "image/webp"
+                            else:
+                                page_mime = "image/jpeg"
 
-                    total_pages = len(page_bytes_list)
-                    progress_bar = st.progress(0, text=f"{uploaded_file.name}: শুরু হচ্ছে...")
+                        total_pages = len(page_bytes_list)
+                        all_new_rows = []
+                        failed_pages = 0
+                        last_error = None
 
-                    all_new_rows = []
-                    for page_index, page_bytes in enumerate(page_bytes_list):
-                        page_label = f"{uploaded_file.name} (পেজ {page_index + 1}/{total_pages})"
-                        progress_bar.progress((page_index) / total_pages, text=f"⏳ {page_label} প্রসেস করা হচ্ছে...")
+                        for page_index, page_bytes in enumerate(page_bytes_list):
+                            page_label = f"{uploaded_file.name} (পেজ {page_index + 1}/{total_pages})"
 
-                        # ফ্রি টিয়ারের rate limit (মিনিটে সীমিত রিকোয়েস্ট) এড়াতে পরপর কলের মাঝে ছোট বিরতি
-                        if page_index > 0:
-                            time.sleep(4)
+                            # ফ্রি টিয়ারের rate limit (মিনিটে সীমিত রিকোয়েস্ট) এড়াতে পরপর কলের মাঝে ছোট বিরতি
+                            if page_index > 0:
+                                time.sleep(4)
 
-                        base64_data = base64.b64encode(page_bytes).decode("utf-8")
+                            base64_data = base64.b64encode(page_bytes).decode("utf-8")
 
-                        try:
-                            entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
-                        except Exception as gemini_error:
-                            entries_list = None
-                            last_error = gemini_error
+                            try:
+                                entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
+                            except Exception as gemini_error:
+                                entries_list = None
+                                last_error = gemini_error
 
-                            # ১ম ব্যাকআপ: Groq
-                            if groq_api_key:
-                                st.warning(f"⚠️ {page_label}: Gemini ব্যর্থ হয়েছে, Groq (ব্যাকআপ ১) দিয়ে চেষ্টা করা হচ্ছে...")
-                                try:
-                                    if page_mime == "application/pdf":
-                                        png_bytes = pdf_page_to_png(page_bytes)
-                                        backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
-                                        backup_mime = "image/png"
-                                    else:
-                                        backup_base64 = base64_data
-                                        backup_mime = page_mime
-                                    entries_list = extract_entries_from_groq(backup_base64, backup_mime, groq_api_key, page_label)
-                                except Exception as groq_error:
-                                    last_error = groq_error
+                                # ১ম ব্যাকআপ: Groq
+                                if groq_api_key:
+                                    try:
+                                        if page_mime == "application/pdf":
+                                            png_bytes = pdf_page_to_png(page_bytes)
+                                            backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
+                                            backup_mime = "image/png"
+                                        else:
+                                            backup_base64 = base64_data
+                                            backup_mime = page_mime
+                                        entries_list = extract_entries_from_groq(backup_base64, backup_mime, groq_api_key, page_label)
+                                    except Exception as groq_error:
+                                        last_error = groq_error
 
-                            # ২য় ব্যাকআপ: Mistral (Groq-ও fail করলে বা key না থাকলে)
-                            if entries_list is None and mistral_api_key:
-                                st.warning(f"⚠️ {page_label}: Groq-ও ব্যর্থ হয়েছে, Mistral (ব্যাকআপ ২) দিয়ে চেষ্টা করা হচ্ছে...")
-                                try:
-                                    if page_mime == "application/pdf":
-                                        png_bytes = pdf_page_to_png(page_bytes)
-                                        backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
-                                        backup_mime = "image/png"
-                                    else:
-                                        backup_base64 = base64_data
-                                        backup_mime = page_mime
-                                    entries_list = extract_entries_from_mistral(backup_base64, backup_mime, mistral_api_key, page_label)
-                                except Exception as mistral_error:
-                                    last_error = mistral_error
+                                # ২য় ব্যাকআপ: Mistral (Groq-ও fail করলে বা key না থাকলে)
+                                if entries_list is None and mistral_api_key:
+                                    try:
+                                        if page_mime == "application/pdf":
+                                            png_bytes = pdf_page_to_png(page_bytes)
+                                            backup_base64 = base64.b64encode(png_bytes).decode("utf-8")
+                                            backup_mime = "image/png"
+                                        else:
+                                            backup_base64 = base64_data
+                                            backup_mime = page_mime
+                                        entries_list = extract_entries_from_mistral(backup_base64, backup_mime, mistral_api_key, page_label)
+                                    except Exception as mistral_error:
+                                        last_error = mistral_error
 
-                            if entries_list is None:
-                                st.error(f"{page_label} প্রসেস করতে ত্রুটি হয়েছে (সব সোর্স ব্যর্থ): {str(last_error)}")
-                                continue
+                                if entries_list is None:
+                                    failed_pages += 1
+                                    continue
 
-                        for data_json in entries_list:
-                            current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
-                            formatted_name_father = f"নাম- {data_json.get('name')}   পিতা- {data_json.get('father')}"
-                            all_new_rows.append({
-                                "ক্রঃনং": current_sl,
-                                "প্রশিক্ষণার্থীর নাম ও পিতার নাম": formatted_name_father,
-                                "জাতীয় পরিচয়পত্র নং": str(data_json.get('nid')),
-                                "মোবাইল নম্বর": str(data_json.get('mobile')),
-                                "জেলা": data_json.get('district')
-                            })
+                            for data_json in entries_list:
+                                current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
+                                formatted_name_father = f"নাম- {data_json.get('name')}   পিতা- {data_json.get('father')}"
+                                all_new_rows.append({
+                                    "ক্রঃনং": current_sl,
+                                    "প্রশিক্ষণার্থীর নাম ও পিতার নাম": formatted_name_father,
+                                    "জাতীয় পরিচয়পত্র নং": str(data_json.get('nid')),
+                                    "মোবাইল নম্বর": str(data_json.get('mobile')),
+                                    "জেলা": data_json.get('district')
+                                })
 
-                        progress_bar.progress((page_index + 1) / total_pages, text=f"✅ {page_label} সম্পন্ন")
+                        if all_new_rows:
+                            st.session_state.excel_df = pd.concat([st.session_state.excel_df, pd.DataFrame(all_new_rows)], ignore_index=True)
 
-                    if all_new_rows:
-                        st.session_state.excel_df = pd.concat([st.session_state.excel_df, pd.DataFrame(all_new_rows)], ignore_index=True)
+                        if failed_pages > 0:
+                            st.info(f"📄 {uploaded_file.name}: {total_pages} পেজ থেকে {len(all_new_rows)} টি এন্ট্রি পাওয়া গেছে। ({failed_pages} টি পেজ প্রসেস করা যায়নি: {str(last_error)[:120]})")
+                        else:
+                            st.info(f"📄 {uploaded_file.name}: {total_pages} পেজ থেকে {len(all_new_rows)} টি এন্ট্রি পাওয়া গেছে।")
 
-                    progress_bar.empty()
-                    st.info(f"📄 {uploaded_file.name}: {total_pages} পেজ থেকে {len(all_new_rows)} টি এন্ট্রি পাওয়া গেছে।")
+                    except Exception as e:
+                        st.error(f"{uploaded_file.name} প্রসেস করতে ত্রুটি হয়েছে: {str(e)}")
 
-                except Exception as e:
-                    st.error(f"{uploaded_file.name} প্রসেস করতে ত্রুটি হয়েছে: {str(e)}")
 
             st.success("✅ সব ফাইলের ডেটা সফলভাবে এক্সট্রাক্ট করা হয়েছে!")
 
