@@ -226,9 +226,20 @@ mistral_api_key = st.sidebar.text_input("🔑 Mistral API Key (ঐচ্ছি�
 st.sidebar.caption("ফ্রি key বানাতে: console.groq.com এবং console.mistral.ai")
 st.sidebar.caption("💡 key বারবার না দিতে চাইলে Secrets-এ সেভ করুন (নিচে instruction দেখুন)")
 
-# ৩. সেশন স্টেটে এক্সেল ডাটা ফ্রেম ইনিশিয়েলাইজ করা
+# ৩. সেশন স্টেটে এক্সেল ডাটা ফ্রেম ও API ব্যবহারের কাউন্টার ইনিশিয়েলাইজ করা
 if 'excel_df' not in st.session_state:
-    st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা"])
+    st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা", "থাম্বনেইল"])
+
+if 'api_usage' not in st.session_state:
+    st.session_state.api_usage = {"gemini": 0, "groq": 0, "mistral": 0}
+
+# সাইডবারে আজকের API ব্যবহারের কাউন্টার দেখানো
+st.sidebar.markdown("---")
+st.sidebar.markdown("**📊 এই সেশনে ব্যবহার হয়েছে**")
+u_col1, u_col2, u_col3 = st.sidebar.columns(3)
+u_col1.metric("Gemini", st.session_state.api_usage["gemini"])
+u_col2.metric("Groq", st.session_state.api_usage["groq"])
+u_col3.metric("Mistral", st.session_state.api_usage["mistral"])
 
 # ৪. একটা সিঙ্গেল পেজ/ইমেজ Gemini-তে পাঠিয়ে ডেটা এক্সট্রাক্ট করার ফাংশন (রিট্রাই লজিক সহ)
 def extract_entries_from_gemini(base64_data, mime_type, api_key, label):
@@ -389,6 +400,31 @@ def pdf_page_to_png(pdf_page_bytes):
     return pix.tobytes("png")
 
 
+# ৬.১ প্রিভিউ/QA-এর জন্য ছোট থাম্বনেইল বানানো (এক্সট্র্যাক্ট করা ডেটার পাশে দেখানোর জন্য)
+def make_thumbnail_data_uri(page_bytes, page_mime, max_width=200):
+    try:
+        if page_mime == "application/pdf":
+            import fitz
+            doc = fitz.open(stream=page_bytes, filetype="pdf")
+            page = doc[0]
+            zoom = max_width / page.rect.width
+            pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+            img_bytes = pix.tobytes("jpeg")
+        else:
+            from PIL import Image
+            img = Image.open(io.BytesIO(page_bytes)).convert("RGB")
+            ratio = max_width / img.width
+            img = img.resize((max_width, max(1, int(img.height * ratio))))
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=70)
+            img_bytes = buf.getvalue()
+
+        b64 = base64.b64encode(img_bytes).decode("utf-8")
+        return f"data:image/jpeg;base64,{b64}"
+    except Exception:
+        return None  # থাম্বনেইল বানাতে ব্যর্থ হলেও মূল ডেটা এক্সট্রাকশন যেন থেমে না যায়
+
+
 # ৬.১ একটা সিঙ্গেল পেজ/ইমেজ Mistral (২য় ব্যাকআপ)-এ পাঠিয়ে ডেটা এক্সট্রাক্ট করার ফাংশন
 def extract_entries_from_mistral(base64_data, mime_type, api_key, label):
     url = "https://api.mistral.ai/v1/chat/completions"
@@ -506,9 +542,11 @@ if uploaded_files:
                                 time.sleep(4)
 
                             base64_data = base64.b64encode(page_bytes).decode("utf-8")
+                            source_used = None
 
                             try:
                                 entries_list = extract_entries_from_gemini(base64_data, page_mime, api_key, page_label)
+                                source_used = "gemini"
                             except Exception as gemini_error:
                                 entries_list = None
                                 last_error = gemini_error
@@ -524,6 +562,7 @@ if uploaded_files:
                                             backup_base64 = base64_data
                                             backup_mime = page_mime
                                         entries_list = extract_entries_from_groq(backup_base64, backup_mime, groq_api_key, page_label)
+                                        source_used = "groq"
                                     except Exception as groq_error:
                                         last_error = groq_error
 
@@ -538,12 +577,20 @@ if uploaded_files:
                                             backup_base64 = base64_data
                                             backup_mime = page_mime
                                         entries_list = extract_entries_from_mistral(backup_base64, backup_mime, mistral_api_key, page_label)
+                                        source_used = "mistral"
                                     except Exception as mistral_error:
                                         last_error = mistral_error
 
                                 if entries_list is None:
                                     failed_pages += 1
                                     continue
+
+                            # API ব্যবহারের কাউন্টার আপডেট
+                            if source_used:
+                                st.session_state.api_usage[source_used] += 1
+
+                            # এই পেজের জন্য একটা থাম্বনেইল বানানো (QA-এর জন্য, একবারই বানিয়ে সব এন্ট্রিতে ব্যবহার হবে)
+                            thumbnail_uri = make_thumbnail_data_uri(page_bytes, page_mime)
 
                             for data_json in entries_list:
                                 current_sl = len(st.session_state.excel_df) + len(all_new_rows) + 1
@@ -553,7 +600,8 @@ if uploaded_files:
                                     "প্রশিক্ষণার্থীর নাম ও পিতার নাম": formatted_name_father,
                                     "জাতীয় পরিচয়পত্র নং": str(data_json.get('nid')),
                                     "মোবাইল নম্বর": str(data_json.get('mobile')),
-                                    "জেলা": data_json.get('district')
+                                    "জেলা": data_json.get('district'),
+                                    "থাম্বনেইল": thumbnail_uri
                                 })
 
                         if all_new_rows:
@@ -572,16 +620,26 @@ if uploaded_files:
 
 # ৭. এক্সেল ডেটা টেবিল প্রিভিউ এবং ডাউনলোড সেকশন
 if not st.session_state.excel_df.empty:
-    st.write("### 📊 এক্সেল তালিকা প্রিভিউ (আপনি চাইলে বক্সে ডাবল ক্লিক করে এডিট করতে পারবেন):")
+    st.write("### 📊 এক্সেল তালিকা প্রিভিউ (ডেটা সঠিক কিনা থাম্বনেইল দেখে মিলিয়ে নিন, চাইলে বক্সে ডাবল ক্লিক করে এডিট করতে পারবেন):")
 
-    edited_df = st.data_editor(st.session_state.excel_df, num_rows="dynamic", use_container_width=True)
+    edited_df = st.data_editor(
+        st.session_state.excel_df,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "থাম্বনেইল": st.column_config.ImageColumn("ফর্ম প্রিভিউ", help="মূল ফর্মের ছবি — এন্ট্রির সাথে মিলিয়ে দেখুন")
+        }
+    )
 
     if st.button("🗑️ তালিকা পরিষ্কার করুন"):
-        st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা"])
+        st.session_state.excel_df = pd.DataFrame(columns=["ক্রঃনং", "প্রশিক্ষণার্থীর নাম ও পিতার নাম", "জাতীয় পরিচয়পত্র নং", "মোবাইল নম্বর", "জেলা", "থাম্বনেইল"])
         st.rerun()
 
+    # Excel-এ থাম্বনেইলের base64 ডেটা রাখার দরকার নেই (unusable + ফাইল সাইজ বাড়িয়ে দেয়), তাই বাদ দেওয়া হচ্ছে
+    export_df = edited_df.drop(columns=["থাম্বনেইল"], errors="ignore")
+
     towrite = io.BytesIO()
-    edited_df.to_excel(towrite, index=False, header=True, engine='openpyxl')
+    export_df.to_excel(towrite, index=False, header=True, engine='openpyxl')
     towrite.seek(0)
 
     st.download_button(
