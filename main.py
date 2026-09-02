@@ -102,6 +102,7 @@ st.markdown("""
     [data-testid="stFileUploaderDropzone"] * {
         color: var(--ink) !important;
         fill: var(--ink) !important;
+        background-color: var(--card) !important;
     }
     [data-testid="stFileUploaderDropzone"] button {
         background-color: var(--card) !important;
@@ -115,6 +116,11 @@ st.markdown("""
     [data-testid="stFileUploaderFile"], [data-testid="stFileUploaderFile"] * {
         background-color: var(--card) !important;
         color: var(--ink) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] svg circle,
+    [data-testid="stFileUploaderDropzone"] svg path {
+        fill: none !important;
+        stroke: var(--green-deep) !important;
     }
     [data-testid="stFileUploaderFileName"] {
         color: var(--ink) !important;
