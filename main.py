@@ -151,6 +151,22 @@ st.markdown("""
     div[data-testid="stAlertContentError"] {
         border-left: 5px solid var(--red-stamp);
     }
+    div[data-testid="stAlert"] *,
+    div[data-testid="stAlert"] p,
+    div[data-testid="stAlert"] span,
+    div[data-testid="stAlert"] div {
+        color: var(--ink) !important;
+        opacity: 1 !important;
+    }
+
+    /* --- প্রোগ্রেস বারের উপরের লেখা --- */
+    [data-testid="stProgress"] *,
+    [data-testid="stProgress"] p,
+    [data-testid="stProgress"] span,
+    [data-testid="stProgress"] div {
+        color: var(--ink) !important;
+        opacity: 1 !important;
+    }
 
     /* --- সাইডবার --- */
     [data-testid="stSidebar"] {
